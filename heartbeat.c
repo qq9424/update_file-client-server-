@@ -119,7 +119,7 @@ int main()
 	struct sockaddr_in	 server_addr;  
 	bzero(&server_addr, sizeof(server_addr));  
 	server_addr.sin_family = AF_INET;  
-	server_addr.sin_addr.s_addr = htons( "127.0.0.1" );   
+	server_addr.sin_addr.s_addr = htons( INADDR_ANY );   
 	server_addr.sin_port = htons(0); 
  
 	int socketFD = socket(PF_INET, SOCK_DGRAM , 0);  
@@ -131,7 +131,7 @@ int main()
 
 	if (bind(socketFD, (struct sockaddr*)&server_addr, sizeof(server_addr)))  
 	{  
-		printf("HT Server Bind Port Failed!\n");  
+		printf("HT Server Bind Port Failed! errno:%d\n" , errno);  
 		exit(1);  
 	}  
 	

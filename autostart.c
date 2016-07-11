@@ -367,7 +367,7 @@ void * UDPHeartBeatDetect(void  )
 	
     bzero(&local_addr, sizeof(local_addr));  
     local_addr.sin_family = AF_INET;  
-    local_addr.sin_addr.s_addr = htons("127.0.0.1");  
+    local_addr.sin_addr.s_addr = htons( INADDR_ANY );  
     local_addr.sin_port = htons(HEARTBEAT_UDP_PORT);  
   
  

@@ -20,6 +20,12 @@
 #include <signal.h>
 #include <pthread.h>
 
+#include <string.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <ctype.h>
+#include <stdio.h>
+
 
 #define UDP_PORT       6327   
 
@@ -30,7 +36,7 @@
 #define LENGTH_OF_LISTEN_QUEUE     20  
 
 #define LOG_COUNT     	1000
-#define ERR_COUNT     	5
+#define ERR_COUNT     	8
 #define RECV_TIMEOUT    10
 
 
@@ -64,13 +70,65 @@ int TCP_DATA_PORT =  6327 ;
 
 
 #define FIFO_NAME "/tmp/my_fifo"  
-#define KILL_PROGRAM  " kill -9 `ps  | grep AVHCPG  | awk '{print $1}'`"
+//#define KILL_PROGRAM  " kill -9 `ps  | grep AVHCPG  | awk '{print $1}'`"
 #define PROGRAM_NAME  "/avh/AVHCPG  -qws&"
 //#define PROGRAM_NAME_BACK  "/avh/avhProgramBack"
 
 struct sockaddr_in update_server_addr, connect_server_addr;  //∏¸–¬∑˛ŒÒ∆˜–≈œ¢  
 
 pthread_t sig_user_pid, addressResponse_pid;
+
+#define  READ_BUF_SIZE  256
+
+
+long find_pid_by_name( char* pidName)
+{
+    DIR *dir;
+    struct dirent *next;
+    int i=0;
+ 
+        ///proc‰∏≠ÂåÖÊã¨ÂΩìÂâçÁöÑËøõÁ®ã‰ø°ÊÅØ,ËØªÂèñËØ•ÁõÆÂΩï
+    dir = opendir("/proc");
+    if (!dir){
+        printf("Cannot open /proc");
+	return 0;
+	}
+     
+        //ÈÅçÂéÜ
+    while ((next = readdir(dir)) != NULL) {
+        FILE *status;
+        char filename[READ_BUF_SIZE];
+        char buffer[READ_BUF_SIZE];
+        char name[READ_BUF_SIZE];
+ 
+        /* Must skip ".." since that is outside /proc */
+        if (strcmp(next->d_name, "..") == 0)
+            continue;
+ 
+        /* If it isn't a number, we don't want it */
+        if (!isdigit(*next->d_name))
+            continue;
+                //ËÆæÁΩÆËøõÁ®ã
+        sprintf(filename, "/proc/%s/status", next->d_name);
+        if (! (status = fopen(filename, "r")) ) {
+            continue;
+        }
+        if (fgets(buffer, READ_BUF_SIZE-1, status) == NULL) {
+            fclose(status);
+            continue;
+        }
+        fclose(status);
+ 
+                //ÂæóÂà∞ËøõÁ®ãid
+        /* Buffer should contain a string like "Name:   binary_name" */
+        sscanf(buffer, "%*s %s", name);
+        if (strstr(name, pidName) != NULL ) {
+            return strtol(next->d_name, NULL, 0);
+        }
+    }
+ 
+    return 0;
+}
 
 int selectWait(int fd ){
 	int ret;  
@@ -332,127 +390,11 @@ void * addressResponse(void  )
     return (void*)0;  
 }
 
-void sig_term(int signo)
-{ 
-  if(signo == SIGTERM)
-/* catched signal sent by kill(1) command */
-  { 
-    syslog(LOG_INFO, "AutoStart program terminated.");
-    closelog(); 
-    exit(0); 
-  }
-}
-
-void * sig_user(void  )
-{
-	struct sigaction act, oact;
-	act.sa_handler = updateFile;
-	sigemptyset(&act. sa_mask); //«Âø’¥À–≈∫≈ºØ
-	act.sa_flags = 0;
-	sigaction(SIGUSR1, &act, &oact);
-	printf("AutoStart install signal\n");
-	while(1) sleep(10);
-	return (void*)0;  
-}
-
-//µÿ÷∑∑¢œ÷
-void * UDPHeartBeatDetect(void  )  
-{  
-    
-    struct sockaddr_in   local_addr;  
-	struct UPDATE_CMD *comm;
-	int recvLen = 0;
-	int errCount = 0;
-	struct sockaddr_in heartBeatServer;
-	
-    bzero(&local_addr, sizeof(local_addr));  
-    local_addr.sin_family = AF_INET;  
-    local_addr.sin_addr.s_addr = htons( INADDR_ANY );  
-    local_addr.sin_port = htons(HEARTBEAT_UDP_PORT);  
-  
- 
-    int server_socket = socket(PF_INET, SOCK_DGRAM , 0);  
-    if (server_socket < 0)  
-    {  
-        printf("Create Socket Failed!\n");  
-        return;  
-    }  
-
-  	int flags = fcntl(server_socket,F_GETFL,0);//ªÒ»°Ω®¡¢µƒsockfdµƒµ±«∞◊¥Ã¨£®∑«◊Ë»˚£©
-	fcntl(server_socket,F_SETFL,flags|O_NONBLOCK);//Ω´µ±«∞sockfd…Ë÷√Œ™∑«◊Ë»˚
-
-    if (bind(server_socket, (struct sockaddr*)&local_addr, sizeof(local_addr)))  
-    {  
-        printf("Server Bind Port: %d Failed!\n", HEARTBEAT_UDP_PORT );  
-        return;  
-    }  
-    char buffer[BUFFER_SIZE];  
-    
-	comm = (struct UPDATE_CMD *) buffer;
-	
-    while(1)  
-    {  
-		sleep(1);
-        socklen_t          addr_len = sizeof(heartBeatServer);  
-
-        bzero(&buffer, sizeof(buffer));  
-        if( (recvLen = recvfrom(server_socket,buffer,BUFFER_SIZE,0,(struct sockaddr*)&heartBeatServer,&addr_len)) < 0)
-        {
-        	if( !(errno == EAGAIN || errno == EWOULDBLOCK) )
-				printf("error return :%x\n", errno );
-			
-			if( ( 0 == (errCount+1) % ERR_COUNT)  ) 
-	        {
-	          errCount = 0;
-			  system(KILL_PROGRAM);
-			  usleep( 100);
-	          system( PROGRAM_NAME );
-	          printf("AutoStart Time out, restart program:%d.\n",errCount);
-	          sleep(5);
-	        }
-			else			
-        		++errCount ;
-            continue;
-        }
-
-		//receive heart beat
-		errCount = 0;
-        
-        if(sendto(server_socket,buffer,recvLen,0,(struct sockaddr*)&heartBeatServer,addr_len) < 0)
-        {
-            perror("sendrto");
-            exit(-1);
-        }
-
-    }  
-  
-    close(server_socket);  
-  
-    return (void*)0;  
-}
 
 int main(void)
 { 
-    char buf_r[BUFFER_SIZE+1];
-    int fd;
-         
-    //openlog("AutoStart", LOG_PID, LOG_USER);
-    //syslog(LOG_INFO, "AutoStart program started.");
-    //printf("AutoStart program started\n");
-    signal(SIGTERM, sig_term); /* arrange to catch the signal */
-    bzero(buf_r, BUFFER_SIZE); 
-
-	
-    int res;  
-  
-    if((addressResponse_pid = fork()) < 0) 
-      return -1 ;
-    else if(addressResponse_pid == 0) 
-    {
       addressResponse( ); 
-    }
 
-	UDPHeartBeatDetect();
 /*
 	if((sig_user_pid = fork()) < 0) 
       return -1 ;

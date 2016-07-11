@@ -147,15 +147,17 @@ int main()
 		{
 		  perror("HT err sendrto");
 		}
-		printf("HT SEND\n");  
+		//printf("HT SEND\n");  
 		ret = selectWait( socketFD );
 		if(ret > 0)
 		{
 			ret = recvfrom(socketFD,buffer,HEARTBEAT_LEN,0,(struct sockaddr*)&client_addr,&addr_len) ; 
-			printf("HT RECV:%s\n",buffer);
+			//printf("HT RECV:%s\n",buffer);
 		}
-		else
+		else{
+			printf("HT Rev timeout\n");  
 			continue;
+		}
 	}while( 1 );
 	
 	close(socketFD);  

@@ -88,7 +88,7 @@ int broadcastTcpPort(  )
     client_addr.sin_family = AF_INET;  
     client_addr.sin_addr.s_addr = inet_addr( "255.255.255.255" );  
     client_addr.sin_port = htons(UDP_PORT);  
-    addr_len=sizeof(client_addr);
+    
     
     struct sockaddr_in   server_addr;  
     bzero(&server_addr, sizeof(server_addr));  
@@ -121,6 +121,7 @@ int broadcastTcpPort(  )
 	comm->uni.Port = TCP_DATA_PORT;
     
    do{  
+   		addr_len=sizeof(client_addr);
       if( (i = sendto(broadcast_socket,buffer,sizeof(struct UPDATE_CMD),0,(struct sockaddr*)&client_addr,addr_len) ) < 0)
       {
           perror("sendrto");
@@ -140,7 +141,7 @@ int broadcastTcpPort(  )
       }
 
       printf("add recv CMD:%x,\nclient add: %s\n",comm->Cmd , inet_ntoa(client_addr.sin_addr) );
-	  if( comm->Cmd == CMD_ADDRESS_RSP )
+	  if( comm->Cmd == CMD_ADDRESS_RSP )  //success, exit address discover
  		 break;
 	  
 	  sleep(2);
@@ -254,6 +255,7 @@ exitPro:
 		
 }
 
+//file update server
 void tcpAcceptThread(  ) 
 {
 	int value = 1;
@@ -315,9 +317,9 @@ int main(int argc, char **argv)
 	}
 	
 	if( strstr(argv[1] , "-t") != NULL)
-	 	tcpAcceptThread( );
+	 	tcpAcceptThread( );  //first call once: file update server
 	else if( strstr(argv[1] , "-b") != NULL)
-    	broadcastTcpPort( ) ;
+    	broadcastTcpPort( ) ;//call when you want to update file
 	
     return 0;  
   

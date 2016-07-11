@@ -21,7 +21,10 @@
 #include <pthread.h>
 
 
-#define UDP_PORT       6327     
+#define UDP_PORT       6327   
+
+#define HEARTBEAT_UDP_PORT       6347 
+
              
 #define MAX_FILE_LEN 64
 #define LENGTH_OF_LISTEN_QUEUE     20  
@@ -352,6 +355,82 @@ void * sig_user(void  )
 	return (void*)0;  
 }
 
+//地址发现
+void * UDPHeartBeatDetect(void  )  
+{  
+    
+    struct sockaddr_in   local_addr;  
+	struct UPDATE_CMD *comm;
+	int recvLen = 0;
+	int errCount = 0;
+	struct sockaddr_in heartBeatServer;
+	
+    bzero(&local_addr, sizeof(local_addr));  
+    local_addr.sin_family = AF_INET;  
+    local_addr.sin_addr.s_addr = htons("127.0.0.1");  
+    local_addr.sin_port = htons(HEARTBEAT_UDP_PORT);  
+  
+ 
+    int server_socket = socket(PF_INET, SOCK_DGRAM , 0);  
+    if (server_socket < 0)  
+    {  
+        printf("Create Socket Failed!\n");  
+        return;  
+    }  
+
+  	int flags = fcntl(server_socket,F_GETFL,0);//获取建立的sockfd的当前状态（非阻塞）
+	fcntl(server_socket,F_SETFL,flags|O_NONBLOCK);//将当前sockfd设置为非阻塞
+
+    if (bind(server_socket, (struct sockaddr*)&local_addr, sizeof(local_addr)))  
+    {  
+        printf("Server Bind Port: %d Failed!\n", HEARTBEAT_UDP_PORT );  
+        return;  
+    }  
+    char buffer[BUFFER_SIZE];  
+    
+	comm = (struct UPDATE_CMD *) buffer;
+	
+    while(1)  
+    {  
+		sleep(1);
+        socklen_t          addr_len = sizeof(heartBeatServer);  
+
+        bzero(&buffer, sizeof(buffer));  
+        if( (recvLen = recvfrom(server_socket,buffer,BUFFER_SIZE,0,(struct sockaddr*)&heartBeatServer,&addr_len)) < 0)
+        {
+        	if( !(errno == EAGAIN || errno == EWOULDBLOCK) )
+				printf("error return :%x\n", errno );
+			
+			if( ( 0 == (errCount+1) % ERR_COUNT)  ) 
+	        {
+	          errCount = 0;
+			  system(KILL_PROGRAM);
+			  usleep( 100);
+	          system( PROGRAM_NAME );
+	          printf("AutoStart Time out, restart program:%d.\n",errCount);
+	          sleep(5);
+	        }
+			else			
+        		++errCount ;
+            continue;
+        }
+
+		//receive heart beat
+		errCount = 0;
+        
+        if(sendto(server_socket,buffer,recvLen,0,(struct sockaddr*)&heartBeatServer,addr_len) < 0)
+        {
+            perror("sendrto");
+            exit(-1);
+        }
+
+    }  
+  
+    close(server_socket);  
+  
+    return (void*)0;  
+}
+
 int main(void)
 { 
     char buf_r[BUFFER_SIZE+1];
@@ -372,6 +451,8 @@ int main(void)
     {
       addressResponse( ); 
     }
+
+	UDPHeartBeatDetect();
 /*
 	if((sig_user_pid = fork()) < 0) 
       return -1 ;
@@ -380,7 +461,7 @@ int main(void)
       sig_user( ); 
     }*/
 	
-
+/*
     if (access(FIFO_NAME, F_OK) == -1)  
     {  
         res = mkfifo(FIFO_NAME, 0777);  
@@ -391,7 +472,7 @@ int main(void)
         }  
     }  
 
-    syslog(LOG_INFO, "AutoStart Waiting for data form sender.");
+    //syslog(LOG_INFO, "AutoStart Waiting for data form sender.");
   
     fd = open(FIFO_NAME, O_RDONLY|O_NONBLOCK, 0);
     if(fd == -1)
@@ -399,9 +480,9 @@ int main(void)
             perror("打开FIFO");
             return;
     }
-
+int nread,errCount = 0;
 	//心跳包检测及守护模块
-  /*  while(1)
+    while(1)
     {
 
         if((nread = read(fd, buf_r, BUFFER_SIZE)) == -1)
@@ -411,16 +492,16 @@ int main(void)
         }
         if( nread <= 0){
           ++errCount ;
-          syslog(LOG_INFO,"AutoStart errCount：%d\n", errCount);
-         // printf("AutoStart errCount：%d\n", errCount);
+          //syslog(LOG_INFO,"AutoStart errCount：%d\n", errCount);
+          printf("E：%d\n", errCount);
         }
         else {
             errCount = 0;
             if(buf_r[0]=='Q') break;
             buf_r[nread]=0;
-           // printf("从FIFO读取的数据为：%s,%d\n", buf_r, nread);
+            printf("R fifo：%s,%d\n", buf_r, nread);
         }
-                
+              
         if( ( 0 == (errCount+1) % ERR_COUNT)  ) 
         {
           errCount = 0;
@@ -429,8 +510,9 @@ int main(void)
 		  usleep( 100);
           system( PROGRAM_NAME );
           printf("AutoStart Time out, restart program:%d.\n",errCount);
+          sleep(5);
         }
-          
+         
         sleep(1);
     }
 */

@@ -46,7 +46,7 @@ struct UPDATE_CMD{
 	}uni;
 };
 
-#define DATA_SIZE                  1024
+#define DATA_SIZE                  512
 #define BUFFER_SIZE                (DATA_SIZE+sizeof(struct UPDATE_CMD))
 
 
@@ -78,7 +78,10 @@ int selectWait(int fd ){
 
 int broadcastTcpPort(  )  
 {  
-    
+    char info_version[16];
+	char info_serial[16];
+	char info_machineNo[16], chlen;
+	char * pbuf;
     struct sockaddr_in   client_addr;  
     socklen_t addr_len;
 	struct UPDATE_CMD *comm;
@@ -119,6 +122,8 @@ int broadcastTcpPort(  )
 	comm = (struct UPDATE_CMD *) buffer;
 	comm->Cmd = CMD_ADDRESS_REQ;
 	comm->uni.Port = TCP_DATA_PORT;
+
+	pbuf = buffer + sizeof( struct UPDATE_CMD );
     
    do{  
    		addr_len=sizeof(client_addr);
@@ -140,7 +145,16 @@ int broadcastTcpPort(  )
           goto exitPro;
       }
 
-      printf("add recv CMD:%x,\nclient add: %s\n",comm->Cmd , inet_ntoa(client_addr.sin_addr) );
+	  chlen = *pbuf++;
+	  strncpy(info_version , pbuf,chlen);
+	  pbuf += chlen;
+	  chlen = *pbuf++;
+	  strncpy(info_serial, pbuf,chlen);
+	  pbuf += chlen;
+	  chlen = *pbuf++;
+	  strncpy(info_machineNo, pbuf,chlen);
+	  
+      printf("add recv CMD:%x,\nclient add: %s,v:%s,s:%s,n:%s\n",comm->Cmd , inet_ntoa(client_addr.sin_addr) ,info_version,info_serial,info_machineNo);
 	  if( comm->Cmd == CMD_ADDRESS_RSP )  //success, exit address discover
  		 break;
 	  
@@ -195,7 +209,7 @@ void tcpDataTransThread( void * socket)
 	if( comm->Cmd == CMD_UPDATE_YES) {
     	//printf("enter file full path\n"); //服务器端文件保存路径
     	//scanf("%s", buffer + sizeof(struct UPDATE_CMD ));
-    	strncat(buffer + sizeof(struct UPDATE_CMD ) , FILE_SAVE_PATH , strlen( FILE_SAVE_PATH ));
+    	strncpy(buffer + sizeof(struct UPDATE_CMD ) , FILE_SAVE_PATH , strlen( FILE_SAVE_PATH ));
 		comm->DataLen = strlen( FILE_SAVE_PATH );
 
 		unsigned long filesize = 0;	
@@ -233,7 +247,7 @@ void tcpDataTransThread( void * socket)
     int file_block_length = 0;  
     while( (file_block_length = fread(buffer + sizeof(struct UPDATE_CMD ), sizeof(char), DATA_SIZE, fp)) > 0)  
     {  
-        printf("file_block_length = %d\n", file_block_length);  
+       // printf("file_block_length = %d\n", file_block_length);  
 		comm->DataLen = file_block_length;
 		comm->Cmd = CMD_UPDATE_FILE;
 		comm->uni.TM = TM;
@@ -243,9 +257,10 @@ void tcpDataTransThread( void * socket)
             printf("Send File:\t%s Failed!\n", FILE_LOCAL);  
             break;  
         }  
-
+		usleep(10);
         bzero(buffer, sizeof(buffer));  
-    }  
+    } 
+	sleep(1);
     fclose(fp);  
     printf("File:\t%s Transfer Finished!\n", FILE_LOCAL);  
 	

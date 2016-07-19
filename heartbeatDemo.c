@@ -30,41 +30,7 @@
 #define UDP_PORT       6327   
 
 #define HEARTBEAT_UDP_PORT       6347 
-
-             
-#define MAX_FILE_LEN 64
-#define LENGTH_OF_LISTEN_QUEUE     20  
-
-#define LOG_COUNT     	1000
 #define ERR_COUNT     	8
-#define RECV_TIMEOUT    10
-
-
-#define PRO_VERSION  0X0105
-
-#define CMD_ADDRESS_REQ      0X3053            //地址请求
-#define CMD_ADDRESS_RSP      0X2054 		   //地址请求响应:终端
-
-#define CMD_UPDATE_REQ      0X2063             //文件更新请求:终端
-#define CMD_UPDATE_YES      0X3064 		   //文件更新响应:有文件更新
-#define CMD_UPDATE_NO       0X3065 		   //文件更新响应:无文件更新
-#define CMD_UPDATE_START    0X2066 		   //文件更新开始:终端
-#define CMD_UPDATE_FILE     0X3067 		   //文件更新中
-
-#define CMD_ERR     		   0X3073            //命令出错
-
-
-struct UPDATE_CMD{
-	short Cmd;
-	short DataLen;               //包大小，文件更新用（注： CMD_UPDATE_REQ命令时为软件版本）
-	union{
-		int Port;           //CMD_ADDRESS_REQ: 地址发现时，更新服务器发送TCP数据通信端口
-		int Flen;           //CMD_UPDATE_YES:  文件总大小，文件更新响应时用
-		int TM;             //CMD_UPDATE_FILE: 特征码，文件更新过程中用
-	}uni;
-};
-
-#define BUFFER_SIZE               (1024+sizeof(struct UPDATE_CMD))
 
 int TCP_DATA_PORT =  6327 ;
 
@@ -143,7 +109,7 @@ void * UDPHeartBeatDetect(void  )
 	
     bzero(&local_addr, sizeof(local_addr));  
     local_addr.sin_family = AF_INET;  
-    local_addr.sin_addr.s_addr = htons( INADDR_ANY );  
+    local_addr.sin_addr.s_addr =  inet_addr("127.0.0.1"); //htons( INADDR_ANY );  
     local_addr.sin_port = htons(HEARTBEAT_UDP_PORT);  
   
  
@@ -162,7 +128,7 @@ void * UDPHeartBeatDetect(void  )
         printf("Server Bind Port: %d Failed! errno:%d\n", HEARTBEAT_UDP_PORT,errno );  
         return;  
     }  
-    char buffer[BUFFER_SIZE];  
+    char buffer[READ_BUF_SIZE];  
 	char KILL_PROGRAM[32];
     
 	comm = (struct UPDATE_CMD *) buffer;
@@ -175,7 +141,7 @@ void * UDPHeartBeatDetect(void  )
         socklen_t          addr_len = sizeof(heartBeatServer);  
 
         bzero(&buffer, sizeof(buffer));  
-        if( (recvLen = recvfrom(server_socket,buffer,BUFFER_SIZE,0,(struct sockaddr*)&heartBeatServer,&addr_len)) < 0)
+        if( (recvLen = recvfrom(server_socket,buffer,READ_BUF_SIZE,0,(struct sockaddr*)&heartBeatServer,&addr_len)) < 0)
         {
         	if( !(errno == EAGAIN || errno == EWOULDBLOCK) )
 				printf("error return :%x\n", errno );

@@ -31,6 +31,8 @@
 
 #define HEARTBEAT_UDP_PORT       6347 
 
+#define INFO_FILE  "XtInFO.dat"
+
              
 #define MAX_FILE_LEN 64
 #define LENGTH_OF_LISTEN_QUEUE     20  
@@ -45,7 +47,9 @@
 #define CMD_ADDRESS_REQ      0X3053            //地址请求
 #define CMD_ADDRESS_RSP      0X2054 		   //地址请求响应:终端
 
-#define CMD_UPDATE_REQ      0X2063             //文件更新请求:终端
+#define CMD_UPDATE_REQ      	0X2063             //主文件更新请求:终端
+#define CMD_UPDATE_REQ_OTHER    0X2064             //其它文件更新请求:终端
+
 #define CMD_UPDATE_YES      0X3064 		   //文件更新响应:有文件更新
 #define CMD_UPDATE_NO       0X3065 		   //文件更新响应:无文件更新
 #define CMD_UPDATE_START    0X2066 		   //文件更新开始:终端
@@ -64,7 +68,9 @@ struct UPDATE_CMD{
 	}uni;
 };
 
-#define BUFFER_SIZE               (1024+sizeof(struct UPDATE_CMD))
+#define BUFFER_SIZE               (1024+sizeof(struct UPDATE_CMD))    
+
+#define RING_BUFFER_SIZE               ( 4 * (1024+sizeof(struct UPDATE_CMD)) )   //ring buffer, to process tcp merge send 
 
 int TCP_DATA_PORT =  6327 ;
 
@@ -80,6 +86,9 @@ pthread_t sig_user_pid, addressResponse_pid;
 
 #define  READ_BUF_SIZE  256
 
+char info_version[16];
+char info_serial[16];
+char info_machineNo[16];
 
 long find_pid_by_name( char* pidName)
 {
@@ -148,11 +157,20 @@ int selectWait(int fd ){
 	return ret;
 }
 
-static void updateFile(  )
+
+static int updateFile(  )
 {  
     char  FileFullName[MAX_FILE_LEN]="";
+	int retValue = -1;
+	int bmainProgram = 1;
     struct UPDATE_CMD *comm;
-	char buffer[BUFFER_SIZE];  
+	char buffer[RING_BUFFER_SIZE];  
+	char *pRingBuff;
+	int RingBuffSize;
+	int ringHead = 0, ringTail = 0;
+	int ringLeft = RING_BUFFER_SIZE;
+	struct UPDATE_CMD cmdHead;
+	
 	int value = 1,recvLen = 0, fileLen = 0, TM = -1,recFileLen = 0,ret;
 	int minCmdLen = sizeof(struct UPDATE_CMD);
 	printf("Update Server program started!\n");  
@@ -160,7 +178,7 @@ static void updateFile(  )
 	if (client_socket < 0)	
 	{  
 		printf("Create Socket Failed!\n");	
-		return;  
+		return -1;  
 	}  
 
 	//while( 1 )
@@ -199,15 +217,38 @@ static void updateFile(  )
 		    {  
 		        printf("Can Not Connect To !\n");  
 				goto exitPro; 
-		    }  
+		    } 
+			printf("buffer add start:%x, end:%x\n", (void *)buffer, (void *)&buffer[RING_BUFFER_SIZE]);
 
+regetFile:
+			TM = -1;
+			recFileLen = 0;
+			fileLen = 0;
 		  	comm = (struct UPDATE_CMD *) buffer;
 
-		    bzero(buffer, BUFFER_SIZE); 
-		    comm->Cmd = CMD_UPDATE_REQ;
-			comm->DataLen = PRO_VERSION;
+		    bzero(buffer, RING_BUFFER_SIZE); 
 		    
-		    send(client_socket, buffer, minCmdLen, 0);  
+			comm->DataLen = PRO_VERSION;
+
+			char *pbuf;
+    
+			pbuf = buffer + sizeof( struct UPDATE_CMD );
+
+			if( bmainProgram ){
+				comm->Cmd = CMD_UPDATE_REQ;
+				* pbuf = strlen ( info_version ) + 1;
+				strcpy( ++pbuf , info_version );
+				pbuf += strlen ( info_version ) + 1;
+
+				* pbuf = strlen ( info_serial ) + 1;
+				strcpy( ++pbuf , info_serial );
+				pbuf += strlen ( info_serial ) + 1;
+				
+			}
+			else
+				comm->Cmd = CMD_UPDATE_REQ_OTHER;
+	
+		    send(client_socket, buffer, pbuf-buffer, 0);  
 
 			ret = selectWait( client_socket );
 	        if(ret > 0)  
@@ -226,23 +267,29 @@ static void updateFile(  )
 					}
 					send(client_socket, buffer, minCmdLen, 0); 
 		    	}
-				else if( comm->Cmd == CMD_UPDATE_NO){  
-		       		printf("No file need to update!\n");  
-					goto exitPro;
+				else if( (comm->Cmd == CMD_UPDATE_NO) && bmainProgram){  
+		       		printf("No main file need to update!\n");  
+					retValue = 0;
+					bmainProgram = 0;
+					goto regetFile;
 		    	}
 				else {  
-		       		printf("Error response!\n");  
+					if (comm->Cmd == CMD_UPDATE_NO)
+						printf("no file need update!\n");  
+					else
+		       			printf("Error response!\n");  
 					goto exitPro;
 		    	}
 			}
-			else if( recvLen <0 )
+			else 
 			{  
-				printf("Server Recieve Data Failed!\n");  
+				printf("Server Recieve len:%d , exit update!\n", recvLen);  
 				goto exitPro; 
 			} 
 			
-		       
-		    FILE *fp = fopen(FileFullName, "wb");  
+		    bmainProgram = 0;  
+			FILE *fp = fopen(FileFullName, "wb"); 
+		 //   FILE *fp = fopen("/avh/abc", "wb");  
 		    if (fp == NULL)  
 		    {  
 		        printf("File:\t%s create error!\n", FileFullName);  
@@ -251,55 +298,108 @@ static void updateFile(  )
 		    {  
 		        // 从服务器端接收数据到buffer中   
 		        bzero(buffer, sizeof(buffer));  
+				ringHead = 0;
+				ringTail = 0;
+				pRingBuff = buffer;
 		        while( 1 )  
 		        {  
 		        	ret = selectWait( client_socket );
-			        if(ret > 0)  
-						recvLen = recv(client_socket, buffer, BUFFER_SIZE, 0);  
-					else
-						goto exitPro;
-		            if (recvLen < 0)  
-		            {  
-		                printf("Recieve Data From Server %s Failed!\n", inet_ntoa(server_addr.sin_addr));  
-		                break;  
-		            }
-					else if( recvLen < minCmdLen + comm->DataLen )
-					{  
-		                printf("Len check error. act:%d,expect:%d!\n", recvLen , minCmdLen + comm->DataLen);  
-		                continue;  
-		            }
-					if( comm->Cmd == CMD_UPDATE_FILE)
+
+					//head == tail : buffer is null
+					if( ringHead >= ringTail) //线性剩余空间
 					{
-						if(TM == -1 )
-							TM = comm->uni.TM;
-						if( TM != comm->uni.TM)
-						{
-							printf("TM error,act:%d, expect:%d!\n", comm->uni.TM, TM );  
-			                continue;  
-			            }
-			            printf("Server rec len:%d,TM:%d\n",recvLen , TM);  
-			            int write_length = fwrite(buffer + minCmdLen, sizeof(char), comm->DataLen, fp);  
-			            if (write_length < comm->DataLen)  
-			            {  
-			                printf("File:\t%s Write Failed!\n", FileFullName);  
-			                break;  
-			            }
-						recFileLen += comm->DataLen;
+						if( 0 == ringTail) //避免head指针与tail指针重合
+							ringLeft = RING_BUFFER_SIZE - ringHead - 1;//最大存储空间为RING_BUFFER_SIZE - 1
+						else
+							ringLeft = RING_BUFFER_SIZE - ringHead;
 						
 					}
-					if( recFileLen >= fileLen )
+					else
+						ringLeft = ringTail - ringHead - 1;
+					
+			        if(ret > 0)  
+						recvLen = recv(client_socket, buffer + ringHead, ringLeft, 0);  
+					else{
+						printf("selectWait err:%d, errno:%d,RingBuffSize:%d \n", ret , errno, RingBuffSize); 
+						fclose(fp); 
+						retValue = 1;
+						goto regetFile;
+					}
+		            if (recvLen <= 0)  
+		            {  
+		                printf("Recieve Data From Server %s over!\n", inet_ntoa(server_addr.sin_addr));  
+		                break;  
+		            }
+
+					ringHead = ( ringHead + recvLen ) % RING_BUFFER_SIZE;
+					
+ProcessAll:					
+					RingBuffSize = (ringHead >= ringTail) ? (ringHead - ringTail) : ( ringHead + RING_BUFFER_SIZE - ringTail );
+					if( RingBuffSize < minCmdLen )
+					{  
+					//	printf("<cmdLen\n");
+		                continue;  
+		            }
+
+					int copyCount = minCmdLen;
+					if(RING_BUFFER_SIZE - ringTail >= copyCount) // 缓冲区末尾有足够空间
+				    {
+				    	memcpy( (void *)&cmdHead,(void *) (buffer + ringTail), copyCount);
+				        
+				    }
+				    else // 缓冲区末尾空间不够，分两次复制
+				    {
+				    	printf("cmd ring end:%d\n",ringTail );
+				        memcpy( (void *)&cmdHead,      (void *) (buffer + ringTail),       RING_BUFFER_SIZE - ringTail );
+						memcpy( ((char *)&cmdHead) + RING_BUFFER_SIZE - ringTail, (void *) buffer ,copyCount - (RING_BUFFER_SIZE - ringTail) );
+				    }
+
+					if( RingBuffSize < minCmdLen + cmdHead.DataLen )
+					{  
+					//	printf("<DataLen\n");
+		                continue;  
+		            }
+					
+					ringTail = (ringTail + minCmdLen) % RING_BUFFER_SIZE;
+	
+					if( cmdHead.Cmd == CMD_UPDATE_FILE)
+					{
+						copyCount = cmdHead.DataLen;
+						if(RING_BUFFER_SIZE - ringTail >= copyCount) // 缓冲区末尾有足够空间
+					    {
+							fwrite( (void *) (buffer + ringTail), sizeof(char), copyCount, fp);  
+					    }
+					    else // 缓冲区末尾空间不够，分两次复制
+					    {
+					    	fwrite( (void *) (buffer + ringTail), sizeof(char), RING_BUFFER_SIZE - ringTail, fp);
+							fwrite( (void *) (buffer), sizeof(char), copyCount - (RING_BUFFER_SIZE - ringTail), fp);
+							//printf("write file len:%d\n",recFileLen );
+					    }
+						recFileLen += cmdHead.DataLen;
+						
+						ringTail = ( ringTail + cmdHead.DataLen ) % RING_BUFFER_SIZE;
+						goto ProcessAll;
+					    //printf("rec len:%d,ringTail:%d,comm add:%x\n",recvLen , ringTail , comm);  
+					}
+					else
+						printf("err cmdHead.Cmd:%x\n",cmdHead.Cmd);
+					
+					if( recFileLen >= fileLen ){
+							printf("receive over:recFileLen :%d, said size:%d\n", recFileLen ,fileLen );  
 							break;
-		            bzero(buffer, BUFFER_SIZE);  
+					}
 		        }  
+				retValue = 1;
 				if( recFileLen == fileLen ){
 		        	fclose(fp);  
-		        	printf("Update File:\t %s From Server[%s] Finished!\n", FileFullName, inet_ntoa(server_addr.sin_addr) );  
+		        	printf("Update File:\t %s From Server[%s] Finished,len:%d!\n", FileFullName, inet_ntoa(server_addr.sin_addr) ,recFileLen);  
 				}
 				else{
-					printf("Update File:\t %s From Server[%s] ERROR,REMOVED!\n", FileFullName, inet_ntoa(server_addr.sin_addr) ); 
+					printf("Update File:\t %s From Server[%s] ERROR,len:%d!\n", FileFullName, inet_ntoa(server_addr.sin_addr),recFileLen ); 
 					fclose(fp);  
-					remove(FileFullName);
+					//remove(FileFullName);
 				}
+				goto regetFile;
 		    }  
 		//	close(client_socket);  
 		}
@@ -308,7 +408,7 @@ static void updateFile(  )
   
  exitPro:
  	close(client_socket); 
-    return ;  
+    return retValue;  
 } 
 
 //地址发现
@@ -338,11 +438,14 @@ void * addressResponse(void  )
         return;  
     }  
     char buffer[BUFFER_SIZE];  
+	char *pbuf;
     
 	comm = (struct UPDATE_CMD *) buffer;
+//	pbuf = buffer + sizeof( struct UPDATE_CMD );
 	
     while(1)  
     {  
+pbuf = buffer + sizeof( struct UPDATE_CMD );
 
         socklen_t          addr_len = sizeof(update_server_addr);  
   		printf("Address Server prepare recvfrom !\n");
@@ -364,13 +467,24 @@ void * addressResponse(void  )
 			comm->Cmd = CMD_ADDRESS_RSP;
 			TCP_DATA_PORT = comm->uni.Port;
 			printf("AddReq port: %d\n", comm->uni.Port);  
+			* pbuf = strlen ( info_version ) + 1;
+			strcpy( ++pbuf , info_version );
+			pbuf += strlen ( info_version ) + 1;
+
+			* pbuf = strlen ( info_serial ) + 1;
+			strcpy( ++pbuf , info_serial );
+			pbuf += strlen ( info_serial ) + 1;
+
+			* pbuf = strlen ( info_machineNo ) + 1;
+			strcpy( ++pbuf , info_machineNo );
+			pbuf += strlen ( info_machineNo ) + 1;
         }
 		else
 			comm->Cmd = CMD_ERR;
 		
 		//	for( i = 0; i < ipNum; i++ )
 		{
-	        if(sendto(server_socket,buffer,recvLen,0,(struct sockaddr*)&update_server_addr,addr_len) < 0)
+	        if(sendto(server_socket,buffer,pbuf-buffer,0,(struct sockaddr*)&update_server_addr,addr_len) < 0)
 	        {
 	            perror("sendrto");
 	            exit(-1);
@@ -389,11 +503,34 @@ void * addressResponse(void  )
   
     return (void*)0;  
 }
-
+void readInfo()
+{
+	char buffer[16];
+	char * preturn;
+	FILE *fp = fopen( INFO_FILE, "r");  
+    if (fp )
+    {
+    	do{
+	    	preturn = fgets(  buffer, sizeof(buffer), fp);  //info_version  info_serial  info_machineNo
+			if( strstr(buffer , "VER:") )
+				strcpy( info_version , buffer+4);
+			else if( strstr(buffer , "S/N:") )
+				strcpy( info_serial , buffer+4);
+			else if( strstr(buffer , "No:") )
+				strcpy( info_machineNo , buffer+3);
+    	}while(preturn);
+		printf("read ver:%s,sn:%s,no:%s",info_version, info_serial, info_machineNo);
+    }
+	else
+    {  
+        printf("File:\t%s open error!\n", INFO_FILE);  
+    }  
+}
 
 int main(void)
 { 
-      addressResponse( ); 
+	readInfo();
+	addressResponse( ); 
 
 /*
 	if((sig_user_pid = fork()) < 0) 

@@ -1,0 +1,12 @@
+
+CFLAGS += -Wall
+obj := spidevRead
+src := spidevNew.c
+CC = arm-fsl-linux-gnueabi-gcc 
+
+$(obj): $(src)
+	$(CC) $(CFLAGS) $^ -o $@ -g
+
+.PHONY: clean
+clean:
+	-rm spidev_test

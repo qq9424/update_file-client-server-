@@ -378,24 +378,24 @@ ProcessAll:
 						recFileLen += cmdHead.DataLen;
 						
 						ringTail = ( ringTail + cmdHead.DataLen ) % RING_BUFFER_SIZE;
+						if( recFileLen >= fileLen ){
+							printf("receive over:recFileLen :%d, said size:%d\n", recFileLen ,fileLen );  
+							break;
+						}
 						goto ProcessAll;
 					    //printf("rec len:%d,ringTail:%d,comm add:%x\n",recvLen , ringTail , comm);  
 					}
 					else
 						printf("err cmdHead.Cmd:%x\n",cmdHead.Cmd);
 					
-					if( recFileLen >= fileLen ){
-							printf("receive over:recFileLen :%d, said size:%d\n", recFileLen ,fileLen );  
-							break;
-					}
 		        }  
 				retValue = 1;
 				if( recFileLen == fileLen ){
 		        	fclose(fp);  
-		        	printf("Update File:\t %s From Server[%s] Finished,len:%d!\n", FileFullName, inet_ntoa(server_addr.sin_addr) ,recFileLen);  
+		        	printf("Update File:\t %s From Server[%s] Finished,len:%d , fileLen:%d!\n", FileFullName, inet_ntoa(server_addr.sin_addr) ,recFileLen , fileLen);  
 				}
 				else{
-					printf("Update File:\t %s From Server[%s] ERROR,len:%d!\n", FileFullName, inet_ntoa(server_addr.sin_addr),recFileLen ); 
+					printf("Update File:\t %s From Server[%s] ERROR,len:%d ,  fileLen:%d!\n", FileFullName, inet_ntoa(server_addr.sin_addr),recFileLen ,fileLen); 
 					fclose(fp);  
 					//remove(FileFullName);
 				}

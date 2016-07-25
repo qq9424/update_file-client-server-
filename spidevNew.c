@@ -36,13 +36,15 @@ static void pabort(const char *s)
 static const char *device = "/dev/spidev1.0";
 static uint8_t mode = 0;
 static uint8_t bits = 8;
-static uint32_t speed = 100000;
+static uint32_t speed = 800000;
 static uint8_t par0 = 0;
 static uint8_t regAdd = 0;
 static uint8_t par2 = 0;
 static uint8_t par3 = 0;
-static uint8_t parlen = 2;
+static uint8_t parlen = 4;
 #define spi_read  3
+#define spi_write  2
+
 
 #define WRITE  0 
 static void transfer(int fd)
@@ -50,7 +52,7 @@ static void transfer(int fd)
 	int ret;
 	int i = 10000;
 	uint8_t tx[] = {
-		spi_read, 0x09, 0x33, 0x00, 0x01, 0x02,
+		spi_write, 0x0b, 0x33, 0x00, 0x01, 0x02,
 	};
 	if( par0 == 2)
 	{
@@ -58,6 +60,11 @@ static void transfer(int fd)
 		tx[2] =par2;
 		tx[3] =par3;
 	}
+	else if( par0 == 3){
+		parlen = 2;
+		tx[0] = par0;
+	}
+		
 	tx[1] =regAdd;
 	uint8_t rx[ARRAY_SIZE(tx)] = {0, };
 	struct spi_ioc_transfer tr_txrx[] = {
@@ -65,7 +72,7 @@ static void transfer(int fd)
                 .tx_buf = (unsigned long)tx,
                 .rx_buf = 0,
                 .len = parlen,
-                .delay_usecs = 10,
+                .delay_usecs = 0,
                 .speed_hz = speed,
                 .bits_per_word = bits,
                 .chip_sel  = 1, 
@@ -89,24 +96,32 @@ static void transfer(int fd)
                 .chip_sel  = 2, 
 		},
 	};
-
-        ret = ioctl(fd, SPI_IOC_MESSAGE(2), &tr_txrx[0]);
+	if( par0 == spi_write)
+        ret = ioctl(fd, SPI_IOC_MESSAGE(1), &tr_txrx[0]);
+	else if( par0 == spi_read)
+		ret = ioctl(fd, SPI_IOC_MESSAGE(2), &tr_txrx[0]);
+	else
+		return;
+	
         if (ret == 1) {
                 pabort("can't revieve spi message");
-	}
+		}
 	printf("send:  ");
 
 	for (ret = 0; ret < tr_txrx[0].len; ret++) {
 		printf("%.2X ", tx[ret]);
 	}
-	printf("\nrecv:  ");
 
-	for (ret = 0; ret < tr_txrx[1].len; ret++) {
-		if (!(ret % 6))
-			puts("");
-		printf("%.2X ", rx[ret]);
-	}
+	if( par0 == spi_read){
+		printf("\nrecv:  ");
+
+		for (ret = 0; ret < tr_txrx[1].len; ret++) {
+			if (!(ret % 6))
+				puts("");
+			printf("%.2X ", rx[ret]);
+		}
 	puts("");
+	}
 }
 
 void print_usage(const char *prog)
@@ -148,7 +163,7 @@ void parse_opts(int argc, char *argv[])
 		};
 		int c;
 
-		c = getopt_long(argc, argv, "D:s:r:b:lHOLC3NR", lopts, NULL);
+		c = getopt_long(argc, argv, "c:e:f:D:s:r:b:lHOLC3NR", lopts, NULL);
 		if (c == -1)
 			break;
 
@@ -211,6 +226,9 @@ void parse_opts(int argc, char *argv[])
 /*
  * 示例程序为读MX25L1635E spiflash的id功能
 */
+
+//  ./spidevWrite  -r 11 -c 3
+//  ./spidevWrite  -r 11 -c 2 -e 21 -f 21
 int main(int argc, char *argv[])
 {
 	int ret = 0;
